@@ -1,8 +1,16 @@
 # Empty Aws Cloudformation project
 
 # Usage
+* Create a new project folder
+* Download this repo without cloning
 
-* Download the repo without cloning
+  ```
+  curl -L -o master.zip https://github.com/phcyso/empty_cloudformation_project/archive/master.zip
+  unzip master.zip
+  rm -f master.zip
+  mv empty_cloudformation_project-master/* ./
+  rmdir empty_cloudformation_project-master
+  ```
 * Unzip it into your project folder
 * Remove any bits that are unneeded
 
