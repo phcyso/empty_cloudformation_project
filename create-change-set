@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Display help text if something goes badly
+trap help exit
+
+PROJECT_NAME="my-project" # Used for stack name and help text
+
+help() {
+   echo "Usage: "
+   echo "CREATE/UPDATE ${PROJECT_NAME} stack"
+   echo "Use aws-vault to assume a admin role in the account you wish to provision this stack"
+   echo "Depends on cfparams >= 1.1.0 https://github.com/cultureamp/cfparams"
+   echo "--------------------------------------------------------------------------------------------"
+   echo "./$(basename $0) <STACK_PREFIX> <ENVIRONMENT> [TYPE]"
+   echo "<STACK_PREFIX>     - A short name to identify the stack, identifies which param file to use"
+   echo "<ENVIRONMENT>      - Which tag file to use, Allowed Values: development, staging, production"
+   echo "[TYPE] (Optional)  - 'UPDATE'(default) or 'CREATE'"
+   echo "--------------------------------------------------------------------------------------------"
+}
+
+STACK_PREFIX="$1"
+ENVIRONMENT="$2"
+TYPE=${3:-UPDATE} # possible values are CREATE and UPDATE
+
+main() {
+  # Create any secret params here, this function is intended to be used to randomly generate passwords and keyfiles on creation without human intervention
+  check_create_secret_param_store_value "/path/to/secret/param" "10" "true" "A max 10 char base64 encoded string" "false"
+
+  local stack_name; stack_name="${STACK_PREFIX}-${PROJECT_NAME}"
+
+  echo "Creating CloudFormation stack $stack_name"
+
+  local change_set_name; change_set_name="changeset-$(date +%Y%m%d%H%M%S)-$(git describe --always --dirty)"
+
+  # create ChangeSet, output ARN (Id) on success
+  arn="$(aws cloudformation create-change-set \
+    --change-set-type $TYPE \
+    --stack-name="$stack_name" \
+    --capabilities=CAPABILITY_NAMED_IAM \
+    --template-body="file://cloudformation.yaml" \
+    --parameters="$(get_parameters)" \
+    --tags="$(get_tags)" \
+    --change-set-name="$change_set_name" \
+    --query="Id" --output=text)"
+  if [ "${TYPE}" == "CREATE" ]; then
+    echo "Stack/Change set created, Arn: ${arn}"
+    echo ""
+    echo "execing chset"
+    aws cloudformation wait change-set-create-complete --change-set-name  "${arn}"
+    aws cloudformation execute-change-set --change-set-name "${arn}"
+  else
+    echo "${arn}"
+  fi
+}
+
+check_create_secret_param_store_value(){
+  local param_path; param_path="$1"
+  local secret_length; secret_length="$2"
+  local base64; base64="$3"
+  local description; description="$4"
+  local clean; clean="$5"
+
+  local param_exist; param_exist="$(aws ssm describe-parameters --filters "Key=Name,Values=${param_path}" --output text)"
+
+  if [ -z "$param_exist" ]; then
+    echo "Creating secret in parameter store path: ${param_path}"
+    echo "Secret length: ${secret_length}, base64: ${base64}"
+    echo "Secret description: ${description}"
+
+    local secret_value;
+
+    if [ "${base64}" == "true" ]; then
+      secret_value="$(openssl rand -base64 ${secret_length})"
+    else
+      secret_value="$(openssl rand "${secret_length}")"
+    fi
+
+    if [ "${clean}" == "true" ]; then
+      echo "Trimming the value to remove special chars it may become shorter."
+      secret_value="$(echo "${secret_value}" | tr -cd "[a-z0-9A-Z]")"
+    fi
+
+    aws ssm put-parameter \
+      --name "${param_path}" \
+      --value "${secret_value}" \
+      --type SecureString \
+      --description "${description}"
+  fi
+
+}
+
+get_parameters() {
+  cfparams \
+    --template "cloudformation.yaml" \
+    --parameters "parameters/${STACK_PREFIX}.yaml" \
+    --accept-defaults \
+    --no-previous
+}
+
+get_tags() {
+  cfparams --tags "tag_files/${ENVIRONMENT}.yaml"
+}
+
+# Run the script
+main "$@"
+trap - exit
