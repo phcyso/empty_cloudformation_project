@@ -17,9 +17,9 @@
 
 # Helpful snippets for use in Aws Cloudformation templates
 
-## Cfn init helpers
+## In userdata/cfn-init
 
-### Load param from param store into a file
+### Load param from param store into a file in
 ```
 SECRET_FILE=/etc/blah/secret/file
 aws --region "$AWS_REGION" ssm get-parameter --with-decryption --name /path/to/secret/value --output text --query 'Parameter.Value' > /etc/mongo/keyfile
